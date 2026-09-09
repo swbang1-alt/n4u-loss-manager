@@ -1,0 +1,6 @@
+# 이 폴더에는 다른 작업 파일이 함께 있으므로 배포에 필요한 파일만 GitHub에 올립니다.
+*
+!.gitignore
+!README.md
+!n4u_upload_app.py
+!requirements.txt
