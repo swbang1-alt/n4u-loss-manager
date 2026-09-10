@@ -10,7 +10,6 @@ from io import BytesIO
 import re
 from typing import Any, BinaryIO
 
-import altair as alt
 import openpyxl
 import pandas as pd
 import streamlit as st
@@ -222,27 +221,6 @@ def with_daily_subtotals(dataframe: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(result_parts, ignore_index=True)[DISPLAY_COLUMNS]
 
 
-def product_loss_ranking(records: list[dict[str, Any]], selected_keys: set[tuple[str, str]]) -> pd.DataFrame:
-    """전표 감모금액을 투입중량 비중으로 품목에 배분해 순위를 만든다."""
-    rows: list[dict[str, Any]] = []
-    for record in records:
-        if (record["date"], record["doc_no"]) not in selected_keys or not record["inp_details"]:
-            continue
-        details = record["inp_details"]
-        total_weight = sum(abs(float(item["weight_kg"])) for item in details)
-        for item in details:
-            share = abs(float(item["weight_kg"])) / total_weight if total_weight else 1 / len(details)
-            rows.append({
-                "품목명": item["name"],
-                "감모금액(원)": record["loss_cost"] * share,
-            })
-    if not rows:
-        return pd.DataFrame(columns=["품목명", "감모금액(원)", "절대감모금액"])
-    ranking = pd.DataFrame(rows).groupby("품목명", as_index=False)["감모금액(원)"].sum()
-    ranking["절대감모금액"] = ranking["감모금액(원)"].abs()
-    return ranking.nlargest(10, "절대감모금액").sort_values("절대감모금액")
-
-
 def to_excel(dataframe: pd.DataFrame) -> bytes:
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -319,54 +297,6 @@ if records is not None:
     metrics[4].metric("총 감모비율", f"{total_loss_ratio:,.2f}%")
     metrics[5].metric("총 소분작업비용", f"{total_work_cost:,.0f}원")
     metrics[6].metric("총 작업비비율", f"{total_work_ratio:,.2f}%")
-
-    st.subheader("그래프 분석")
-    if filtered.empty:
-        st.info("선택한 조건에 해당하는 그래프 데이터가 없습니다.")
-    else:
-        daily = filtered.groupby("거래일자", as_index=False).agg({
-            "투입원가(합계)": "sum", "납품원가(합계)": "sum", "감모비율(%)": "mean",
-        })
-        daily["투입원가(절대값)"] = daily["투입원가(합계)"].abs()
-        daily_costs = daily.melt(
-            id_vars="거래일자",
-            value_vars=["투입원가(절대값)", "납품원가(합계)"],
-            var_name="구분",
-            value_name="금액(원)",
-        )
-        cost_chart = alt.Chart(daily_costs).mark_bar().encode(
-            x=alt.X("거래일자:N", title="거래일자", sort=None),
-            xOffset="구분:N",
-            y=alt.Y("금액(원):Q", title="금액 (원)"),
-            color=alt.Color("구분:N", title=None),
-            tooltip=["거래일자:N", "구분:N", alt.Tooltip("금액(원):Q", format=",.0f")],
-        ).properties(height=300)
-        with st.container(border=True):
-            st.markdown("**일자별 투입원가 · 납품원가**")
-            st.altair_chart(cost_chart)
-
-        loss_column, ranking_column = st.columns(2)
-        with loss_column.container(border=True):
-            loss_chart = alt.Chart(daily).mark_line(point=True).encode(
-                x=alt.X("거래일자:N", title="거래일자", sort=None),
-                y=alt.Y("감모비율(%):Q", title="감모비율 (%)"),
-                tooltip=["거래일자:N", alt.Tooltip("감모비율(%):Q", format=".2f")],
-            ).properties(height=280)
-            st.markdown("**일자별 감모비율**")
-            st.altair_chart(loss_chart)
-        with ranking_column.container(border=True):
-            selected_keys = {(row["거래일자"], row["전표번호"]) for _, row in filtered.iterrows()}
-            ranking = product_loss_ranking(records, selected_keys)
-            st.markdown("**품목별 감모금액 TOP 10**")
-            if ranking.empty:
-                st.caption("품목별 감모금액을 계산할 데이터가 없습니다.")
-            else:
-                ranking_chart = alt.Chart(ranking).mark_bar().encode(
-                    x=alt.X("감모금액(원):Q", title="감모금액 (원)"),
-                    y=alt.Y("품목명:N", title=None, sort=alt.SortField("절대감모금액", order="descending")),
-                    tooltip=["품목명:N", alt.Tooltip("감모금액(원):Q", format=",.0f")],
-                ).properties(height=280)
-                st.altair_chart(ranking_chart)
 
     st.subheader("전표별 분석 결과")
     table_frame = with_daily_subtotals(filtered)
