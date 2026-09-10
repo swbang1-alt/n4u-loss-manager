@@ -258,15 +258,14 @@ if records is not None:
     total_loss_ratio = total_loss_weight / abs(total_input_weight) * 100 if total_input_weight else 0.0
     total_work_ratio = total_work_cost / -total_input_cost * 100 if total_input_cost else 0.0
 
-    top_metrics = st.columns(4)
-    top_metrics[0].metric("조회 전표", f"{len(filtered):,}건")
-    top_metrics[1].metric("총 투입중량", f"{total_input_weight:,.2f} kg")
-    top_metrics[2].metric("총 감모중량", f"{total_loss_weight:,.2f} kg")
-    top_metrics[3].metric("총 감모금액", f"{filtered['감모금액(원)'].sum():,.0f}원")
-    bottom_metrics = st.columns(3)
-    bottom_metrics[0].metric("총 감모비율", f"{total_loss_ratio:,.2f}%")
-    bottom_metrics[1].metric("총 소분작업비용", f"{total_work_cost:,.0f}원")
-    bottom_metrics[2].metric("총 작업비비율", f"{total_work_ratio:,.2f}%")
+    metrics = st.columns(7, wrap=False)
+    metrics[0].metric("조회 전표", f"{len(filtered):,}건")
+    metrics[1].metric("총 투입중량", f"{total_input_weight:,.2f} kg")
+    metrics[2].metric("총 감모중량", f"{total_loss_weight:,.2f} kg")
+    metrics[3].metric("총 감모금액", f"{filtered['감모금액(원)'].sum():,.0f}원")
+    metrics[4].metric("총 감모비율", f"{total_loss_ratio:,.2f}%")
+    metrics[5].metric("총 소분작업비용", f"{total_work_cost:,.0f}원")
+    metrics[6].metric("총 작업비비율", f"{total_work_ratio:,.2f}%")
 
     st.subheader("전표별 분석 결과")
     st.dataframe(
