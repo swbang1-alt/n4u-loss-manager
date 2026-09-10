@@ -51,7 +51,6 @@ def find_columns(rows: list[tuple[Any, ...]]) -> tuple[int, dict[str, int]]:
         "date": ["거래년월일", "거래일자", "일자"],
         "doc": ["전표번호", "전표no", "전표"],
         "warehouse": ["창고명", "창고"],
-        "price": ["판매금액", "금액", "원가"],
         "qty": ["수량"],
         "name": ["상품명", "품명", "내역", "품목명"],
         "code": ["품목코드", "상품코드", "코드"],
@@ -63,6 +62,14 @@ def find_columns(rows: list[tuple[Any, ...]]) -> tuple[int, dict[str, int]]:
             for key, words in patterns.items():
                 if key not in found and any(word in header for word in words):
                     found[key] = col_index
+            # 원가 계산에는 부가세까지 포함된 합계금액을 사용한다. 합계금액이
+            # 없는 옛 양식에서는 공급가액, 판매금액 순으로 대체한다.
+            if header == "합계금액":
+                found["price"] = col_index
+            elif header == "공급가액" and "price" not in found:
+                found["price"] = col_index
+            elif header == "판매금액" and "price" not in found:
+                found["price"] = col_index
         if "warehouse" in found and "price" in found:
             return row_index, found
     raise ValueError("소분리스트에서 필수 열인 '창고명'과 '판매금액/금액'을 찾지 못했습니다.")
@@ -229,11 +236,17 @@ if records is not None:
     with st.container(border=True):
         st.subheader("조회 조건", divider="gray")
         with st.form("filter_form", border=False):
-            date_range = st.date_input("거래 기간", value=(min_date, max_date), min_value=min_date, max_value=max_date)
+            start_column, end_column = st.columns(2)
+            with start_column:
+                start_date = st.date_input("시작일", value=min_date, key="filter_start_date")
+            with end_column:
+                end_date = st.date_input("종료일", value=max_date, key="filter_end_date")
             keyword = st.text_input("투입품목명", placeholder="예: 삼겹살")
             st.form_submit_button("조회", icon=":material/search:", type="primary")
 
-    start_date, end_date = (date_range if isinstance(date_range, tuple) else (date_range, date_range))
+    if start_date > end_date:
+        st.error("시작일은 종료일보다 늦을 수 없습니다.")
+        st.stop()
     filtered = frame[(frame["거래일자"] >= start_date.isoformat()) & (frame["거래일자"] <= end_date.isoformat())]
     if keyword:
         filtered = filtered[filtered["투입품목명"].str.contains(keyword, case=False, na=False)]
@@ -265,6 +278,10 @@ if records is not None:
         st.subheader("전표 상세")
         selected = st.selectbox("상세 전표", choices, format_func=lambda value: f"{value[0]} | 전표번호 {value[1]}")
         detail = lookup[selected]
+        cost_metrics = st.columns(3)
+        cost_metrics[0].metric("투입원가", f"{detail['inp_cost']:,.0f}원")
+        cost_metrics[1].metric("납품원가", f"{detail['out_cost']:,.0f}원")
+        cost_metrics[2].metric("소분작업비용", f"{detail['work_cost']:,.0f}원")
         left, right = st.columns(2)
         for column, title, items in ((left, "투입 품목 (소분)", detail["inp_details"]), (right, "산출 품목 (대연점)", detail["out_details"])):
             with column.container(border=True):
