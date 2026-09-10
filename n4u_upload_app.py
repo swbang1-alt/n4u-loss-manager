@@ -251,11 +251,22 @@ if records is not None:
     if keyword:
         filtered = filtered[filtered["투입품목명"].str.contains(keyword, case=False, na=False)]
 
-    metrics = st.columns(4)
-    metrics[0].metric("조회 전표", f"{len(filtered):,}건")
-    metrics[1].metric("총 투입중량", f"{filtered['투입중량(kg)'].sum():,.2f} kg")
-    metrics[2].metric("총 감모중량", f"{filtered['감모수량(kg)'].sum():,.2f} kg")
-    metrics[3].metric("총 감모금액", f"{filtered['감모금액(원)'].sum():,.0f}원")
+    total_input_weight = filtered["투입중량(kg)"].sum()
+    total_loss_weight = filtered["감모수량(kg)"].sum()
+    total_input_cost = filtered["투입원가(합계)"].sum()
+    total_work_cost = filtered["소분작업비용(합계)"].sum()
+    total_loss_ratio = total_loss_weight / abs(total_input_weight) * 100 if total_input_weight else 0.0
+    total_work_ratio = total_work_cost / -total_input_cost * 100 if total_input_cost else 0.0
+
+    top_metrics = st.columns(4)
+    top_metrics[0].metric("조회 전표", f"{len(filtered):,}건")
+    top_metrics[1].metric("총 투입중량", f"{total_input_weight:,.2f} kg")
+    top_metrics[2].metric("총 감모중량", f"{total_loss_weight:,.2f} kg")
+    top_metrics[3].metric("총 감모금액", f"{filtered['감모금액(원)'].sum():,.0f}원")
+    bottom_metrics = st.columns(3)
+    bottom_metrics[0].metric("총 감모비율", f"{total_loss_ratio:,.2f}%")
+    bottom_metrics[1].metric("총 소분작업비용", f"{total_work_cost:,.0f}원")
+    bottom_metrics[2].metric("총 작업비비율", f"{total_work_ratio:,.2f}%")
 
     st.subheader("전표별 분석 결과")
     st.dataframe(
