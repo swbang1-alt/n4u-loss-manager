@@ -190,6 +190,37 @@ def display_dataframe(records: list[dict[str, Any]]) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=DISPLAY_COLUMNS)
 
 
+def with_daily_subtotals(dataframe: pd.DataFrame) -> pd.DataFrame:
+    """전표 목록에 일자별 소계와 전체 총합계 행을 덧붙인다."""
+    numeric_columns = [
+        "투입수량", "투입중량(kg)", "투입원가(합계)", "제조수량", "제조중량(kg)",
+        "납품원가(합계)", "감모수량(kg)", "감모금액(원)", "소분작업비용(합계)",
+    ]
+
+    def summary_row(rows: pd.DataFrame, label: str) -> dict[str, Any]:
+        totals = rows[numeric_columns].sum()
+        input_weight = totals["투입중량(kg)"]
+        input_cost = totals["투입원가(합계)"]
+        return {
+            "거래일자": label, "전표번호": "-", "투입품목코드": "-", "투입품목명": "-",
+            "투입수량": totals["투입수량"], "투입중량(kg)": input_weight,
+            "투입원가(합계)": input_cost, "산출품목코드": "-", "산출품목명": "-",
+            "제조수량": totals["제조수량"], "제조중량(kg)": totals["제조중량(kg)"],
+            "납품원가(합계)": totals["납품원가(합계)"], "감모수량(kg)": totals["감모수량(kg)"],
+            "감모금액(원)": totals["감모금액(원)"],
+            "감모비율(%)": totals["감모수량(kg)"] / abs(input_weight) * 100 if input_weight else 0.0,
+            "작업비비율(%)": totals["소분작업비용(합계)"] / -input_cost * 100 if input_cost else 0.0,
+            "소분작업비용(합계)": totals["소분작업비용(합계)"],
+        }
+
+    result_parts: list[pd.DataFrame] = []
+    for transaction_date, rows in dataframe.groupby("거래일자", sort=True):
+        result_parts.append(rows)
+        result_parts.append(pd.DataFrame([summary_row(rows, f"[{transaction_date} 소계]")]))
+    result_parts.append(pd.DataFrame([summary_row(dataframe, "★ 전체 총합계")]))
+    return pd.concat(result_parts, ignore_index=True)[DISPLAY_COLUMNS]
+
+
 def to_excel(dataframe: pd.DataFrame) -> bytes:
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -268,8 +299,9 @@ if records is not None:
     metrics[6].metric("총 작업비비율", f"{total_work_ratio:,.2f}%")
 
     st.subheader("전표별 분석 결과")
+    table_frame = with_daily_subtotals(filtered)
     st.dataframe(
-        filtered,
+        table_frame,
         hide_index=True,
         column_config={
             name: st.column_config.NumberColumn(format="%,.2f") for name in ["투입중량(kg)", "제조중량(kg)", "감모수량(kg)"]
@@ -280,7 +312,7 @@ if records is not None:
         },
         key="results_table",
     )
-    st.download_button("결과 엑셀 다운로드", data=to_excel(filtered), file_name="엔포유_소분작업분석.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", icon=":material/download:")
+    st.download_button("결과 엑셀 다운로드", data=to_excel(table_frame), file_name="엔포유_소분작업분석.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", icon=":material/download:")
 
     lookup = {(item["date"], item["doc_no"]): item for item in records}
     choices = [(row["거래일자"], row["전표번호"]) for _, row in filtered.iterrows()]
