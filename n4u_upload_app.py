@@ -1733,4 +1733,3 @@ if records is not None:
                     detail_frame,
                     hide_index=True,
                 )
-```
