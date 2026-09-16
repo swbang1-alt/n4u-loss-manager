@@ -51,22 +51,36 @@ DISPLAY_COLUMNS = [
 # 제품코드 정리
 # =========================================================
 def normalize_code(value: Any) -> str:
+    """엑셀의 숫자/문자 제품코드를 같은 문자열로 맞춘다."""
+
     if value is None:
         return ""
+
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
+
     text = str(value).strip()
+
     if re.fullmatch(r"\d+\.0", text):
         return text[:-2]
+
     return text
 
 
 # =========================================================
 # 숫자 변환
 # =========================================================
-def to_number(value: Any, default: float = 0.0) -> float:
-    if value is None or str(value).strip() == "":
+def to_number(
+    value: Any,
+    default: float = 0.0,
+) -> float:
+
+    if value is None:
         return default
+
+    if str(value).strip() == "":
+        return default
+
     if isinstance(value, (int, float)):
         return float(value)
 
@@ -88,40 +102,87 @@ def to_number(value: Any, default: float = 0.0) -> float:
 def find_columns(
     rows: list[tuple[Any, ...]],
 ) -> tuple[int, dict[str, int]]:
+    """소분리스트 첫 15행에서 보고서 헤더와 필요한 열을 찾는다."""
+
     patterns = {
-        "date": ["거래년월일", "거래일자", "일자"],
-        "doc": ["전표번호", "전표no", "전표"],
-        "warehouse": ["창고명", "창고"],
-        "qty": ["수량"],
-        "name": ["상품명", "품명", "내역", "품목명"],
-        "code": ["품목코드", "상품코드", "코드"],
+        "date": [
+            "거래년월일",
+            "거래일자",
+            "일자",
+        ],
+        "doc": [
+            "전표번호",
+            "전표no",
+            "전표",
+        ],
+        "warehouse": [
+            "창고명",
+            "창고",
+        ],
+        "qty": [
+            "수량",
+        ],
+        "name": [
+            "상품명",
+            "품명",
+            "내역",
+            "품목명",
+        ],
+        "code": [
+            "품목코드",
+            "상품코드",
+            "코드",
+        ],
     }
 
     for row_index, row in enumerate(rows[:15]):
+
         found: dict[str, int] = {}
 
         for col_index, cell in enumerate(row):
-            header = (
-                str(cell or "")
-                .replace(" ", "")
-                .lower()
-            )
+
+            header = str(
+                cell or ""
+            ).replace(
+                " ",
+                "",
+            ).lower()
 
             for key, words in patterns.items():
+
                 if (
                     key not in found
-                    and any(word in header for word in words)
+                    and any(
+                        word in header
+                        for word in words
+                    )
                 ):
                     found[key] = col_index
 
+            # 판매금액 우선
             if header == "판매금액":
-                found["price"] = col_index
-            elif header == "합계금액" and "price" not in found:
-                found["price"] = col_index
-            elif header == "공급가액" and "price" not in found:
+
                 found["price"] = col_index
 
-        if "warehouse" in found and "price" in found:
+            # 판매금액이 없는 기존 양식
+            elif (
+                header == "합계금액"
+                and "price" not in found
+            ):
+
+                found["price"] = col_index
+
+            elif (
+                header == "공급가액"
+                and "price" not in found
+            ):
+
+                found["price"] = col_index
+
+        if (
+            "warehouse" in found
+            and "price" in found
+        ):
             return row_index, found
 
     raise ValueError(
@@ -133,9 +194,17 @@ def find_columns(
 # =========================================================
 # 날짜 추출
 # =========================================================
-def extract_date(value: Any) -> str:
-    if isinstance(value, (datetime, date)):
-        return value.strftime("%Y-%m-%d")
+def extract_date(
+    value: Any,
+) -> str:
+
+    if isinstance(
+        value,
+        (datetime, date),
+    ):
+        return value.strftime(
+            "%Y-%m-%d"
+        )
 
     match = re.search(
         r"20\d{2}[.\-/]\d{1,2}[.\-/]\d{1,2}",
@@ -143,6 +212,7 @@ def extract_date(value: Any) -> str:
     )
 
     if match:
+
         return (
             match.group()
             .replace(".", "-")
@@ -159,11 +229,14 @@ def first_match(
     row: tuple[Any, ...],
     pattern: str,
 ) -> str:
+
     for cell in row:
+
         match = re.search(
             pattern,
             str(cell or ""),
         )
+
         if match:
             return match.group()
 
@@ -176,6 +249,7 @@ def first_match(
 def read_product_weights(
     file: BinaryIO,
 ) -> dict[str, float]:
+
     workbook = openpyxl.load_workbook(
         file,
         data_only=True,
@@ -183,16 +257,31 @@ def read_product_weights(
     )
 
     sheet = workbook.active
+
     weights: dict[str, float] = {}
 
-    for row in sheet.iter_rows(values_only=True):
+    for row in sheet.iter_rows(
+        values_only=True
+    ):
+
         if len(row) <= 26:
             continue
 
-        code = normalize_code(row[1])
-        weight = to_number(row[26], default=-1)
+        # B열 : 제품코드
+        code = normalize_code(
+            row[1]
+        )
 
-        if code and weight >= 0:
+        # AA열 : 중량
+        weight = to_number(
+            row[26],
+            default=-1,
+        )
+
+        if (
+            code
+            and weight >= 0
+        ):
             weights[code] = weight
 
     return weights
@@ -205,8 +294,17 @@ def process_files(
     list_file: BinaryIO,
     product_file: BinaryIO,
 ) -> list[dict[str, Any]]:
-    weights = read_product_weights(product_file)
 
+    # -----------------------------------------------------
+    # 제품 중량 불러오기
+    # -----------------------------------------------------
+    weights = read_product_weights(
+        product_file
+    )
+
+    # -----------------------------------------------------
+    # 소분리스트 불러오기
+    # -----------------------------------------------------
     workbook = openpyxl.load_workbook(
         list_file,
         data_only=True,
@@ -214,11 +312,21 @@ def process_files(
     )
 
     rows = list(
-        workbook.active.iter_rows(values_only=True)
+        workbook.active.iter_rows(
+            values_only=True
+        )
     )
 
-    header_index, columns = find_columns(rows)
+    # -----------------------------------------------------
+    # 헤더 찾기
+    # -----------------------------------------------------
+    header_index, columns = find_columns(
+        rows
+    )
 
+    # -----------------------------------------------------
+    # 전표별 그룹
+    # -----------------------------------------------------
     grouped: dict[
         tuple[str, str],
         dict[str, Any],
@@ -227,7 +335,13 @@ def process_files(
     current_doc = "-"
     current_date = "-"
 
-    for row in rows[header_index + 1:]:
+    # =====================================================
+    # 데이터 행 처리
+    # =====================================================
+    for row in rows[
+        header_index + 1:
+    ]:
+
         if (
             not row
             or len(row)
@@ -238,6 +352,9 @@ def process_files(
         ):
             continue
 
+        # -------------------------------------------------
+        # 합계/소계 행 제외
+        # -------------------------------------------------
         row_text = " ".join(
             str(cell)
             for cell in row
@@ -255,35 +372,71 @@ def process_files(
         ):
             continue
 
+        # -------------------------------------------------
+        # 창고
+        # -------------------------------------------------
         warehouse = str(
-            row[columns["warehouse"]] or ""
+            row[
+                columns["warehouse"]
+            ]
+            or ""
         ).strip()
 
-        raw_price = row[columns["price"]]
+        # -------------------------------------------------
+        # 금액
+        # -------------------------------------------------
+        raw_price = row[
+            columns["price"]
+        ]
 
-        if not warehouse or raw_price is None:
+        if (
+            not warehouse
+            or raw_price is None
+        ):
             continue
 
+        # -------------------------------------------------
+        # 전표번호
+        # -------------------------------------------------
         if "doc" in columns:
+
             doc = first_match(
-                (row[columns["doc"]],),
+                (
+                    row[
+                        columns["doc"]
+                    ],
+                ),
                 r"\d{6,}",
             )
+
         else:
+
             doc = ""
 
         doc = (
             doc
-            or first_match(row, r"\d{6,}")
+            or first_match(
+                row,
+                r"\d{6,}",
+            )
             or current_doc
         )
+
         current_doc = doc
 
+        # -------------------------------------------------
+        # 거래일자
+        # -------------------------------------------------
         if "date" in columns:
+
             transaction_date = extract_date(
-                row[columns["date"]]
+                row[
+                    columns["date"]
+                ]
             )
+
         else:
+
             transaction_date = ""
 
         transaction_date = (
@@ -295,12 +448,15 @@ def process_files(
         )
 
         if transaction_date:
+
             transaction_date = (
                 transaction_date
                 .replace(".", "-")
                 .replace("/", "-")
             )
+
         else:
+
             transaction_date = current_date
 
         current_date = transaction_date
@@ -308,58 +464,121 @@ def process_files(
         if transaction_date == "-":
             continue
 
+        # -------------------------------------------------
+        # 수량
+        # -------------------------------------------------
         if "qty" in columns:
+
             qty = to_number(
-                row[columns["qty"]],
+                row[
+                    columns["qty"]
+                ],
                 1.0,
             )
+
         else:
+
             qty = 1.0
 
+        # -------------------------------------------------
+        # 품목코드
+        # -------------------------------------------------
         if "code" in columns:
+
             item_code = normalize_code(
-                row[columns["code"]]
+                row[
+                    columns["code"]
+                ]
             )
+
         else:
+
             item_code = ""
 
+        # -------------------------------------------------
+        # 품목명
+        # -------------------------------------------------
         if "name" in columns:
+
             item_name = str(
-                row[columns["name"]] or ""
+                row[
+                    columns["name"]
+                ]
+                or ""
             ).strip()
+
         else:
+
             item_name = ""
 
+        # -------------------------------------------------
+        # 단중량
+        # -------------------------------------------------
         unit_weight = weights.get(
             item_code,
             0.0,
         )
 
+        # -------------------------------------------------
+        # 상세 데이터
+        # -------------------------------------------------
         detail = {
             "code": item_code or "-",
             "name": item_name or "-",
             "qty": qty,
-            "price": to_number(raw_price),
+            "price": to_number(
+                raw_price
+            ),
             "unit_weight": unit_weight,
             "weight_kg": (
-                qty * unit_weight / 1000
+                qty
+                * unit_weight
+                / 1000
             ),
         }
 
+        # -------------------------------------------------
+        # 전표 그룹 생성
+        # -------------------------------------------------
         record = grouped.setdefault(
-            (doc, transaction_date),
+            (
+                doc,
+                transaction_date,
+            ),
             {
                 "inp": [],
                 "out": [],
             },
         )
 
+        # -------------------------------------------------
+        # 소분 창고 = 투입
+        # -------------------------------------------------
         if "소분" in warehouse:
-            record["inp"].append(detail)
-        elif "대연점" in warehouse:
-            record["out"].append(detail)
 
-    result: list[dict[str, Any]] = []
+            record[
+                "inp"
+            ].append(
+                detail
+            )
+
+        # -------------------------------------------------
+        # 대연점 창고 = 산출
+        # -------------------------------------------------
+        elif "대연점" in warehouse:
+
+            record[
+                "out"
+            ].append(
+                detail
+            )
+
+    # =====================================================
+    # 전표별 계산
+    # =====================================================
+    result: list[
+        dict[str, Any]
+    ] = []
 
     for (
         doc,
@@ -372,69 +591,149 @@ def process_files(
         ),
     ):
 
+        # -------------------------------------------------
+        # 합계 함수
+        # -------------------------------------------------
         def total(
             side: str,
             key: str,
         ) -> float:
+
             return sum(
                 float(item[key])
-                for item in record[side]
+                for item in record[
+                    side
+                ]
             )
 
-        inp_qty = total("inp", "qty")
-        inp_cost = total("inp", "price")
-        inp_weight = total("inp", "weight_kg")
+        # =================================================
+        # 투입
+        # =================================================
+        inp_qty = total(
+            "inp",
+            "qty",
+        )
 
-        out_qty = total("out", "qty")
-        out_cost = total("out", "price")
-        out_weight = total("out", "weight_kg")
+        inp_cost = total(
+            "inp",
+            "price",
+        )
 
+        inp_weight = total(
+            "inp",
+            "weight_kg",
+        )
+
+        # =================================================
+        # 산출
+        # =================================================
+        out_qty = total(
+            "out",
+            "qty",
+        )
+
+        out_cost = total(
+            "out",
+            "price",
+        )
+
+        out_weight = total(
+            "out",
+            "weight_kg",
+        )
+
+        # =================================================
+        # 투입원가
+        # 수량 1개당 투입원가
+        # =================================================
         inp_unit_cost = (
-            abs(inp_cost) / abs(inp_qty)
+            abs(inp_cost)
+            / abs(inp_qty)
             if inp_qty
             else 0.0
         )
 
+        # =================================================
+        # 납품원가
+        # 수량 1개당 납품원가
+        # =================================================
         out_unit_cost = (
-            abs(out_cost) / abs(out_qty)
+            abs(out_cost)
+            / abs(out_qty)
             if out_qty
             else 0.0
         )
 
-        loss_weight = inp_weight + out_weight
+        # =================================================
+        # 감모수량
+        # =================================================
+        loss_weight = (
+            inp_weight
+            + out_weight
+        )
 
-        work_cost = inp_cost + out_cost
+        # =================================================
+        # 소분작업비용
+        # =================================================
+        work_cost = (
+            inp_cost
+            + out_cost
+        )
 
+        # =================================================
+        # 감모금액
+        #
+        # 투입 kg당 원가 × 감모중량
+        # =================================================
         loss_unit_cost = (
-            abs(inp_cost) / abs(inp_weight)
+            abs(inp_cost)
+            / abs(inp_weight)
             if inp_weight
             else 0.0
         )
 
-        loss_cost = loss_weight * loss_unit_cost
+        loss_cost = (
+            loss_weight
+            * loss_unit_cost
+        )
 
+        # =================================================
+        # 감모비율
+        # =================================================
         loss_ratio = (
-            loss_weight / abs(inp_weight) * 100
+            loss_weight
+            / abs(inp_weight)
+            * 100
             if inp_weight
             else 0.0
         )
 
+        # =================================================
+        # 작업비비율
+        # =================================================
         work_ratio = (
-            work_cost / -inp_cost * 100
+            work_cost
+            / -inp_cost
+            * 100
             if inp_cost
             else 0.0
         )
 
+        # =================================================
+        # 결과 저장
+        # =================================================
         result.append(
             {
                 "date": transaction_date,
                 "doc_no": doc,
 
+                # 투입
                 "inp_code": ", ".join(
                     sorted(
                         {
                             item["code"]
-                            for item in record["inp"]
+                            for item
+                            in record["inp"]
                             if item["code"] != "-"
                         }
                     )
@@ -444,7 +743,8 @@ def process_files(
                     sorted(
                         {
                             item["name"]
-                            for item in record["inp"]
+                            for item
+                            in record["inp"]
                             if item["name"] != "-"
                         }
                     )
@@ -455,11 +755,13 @@ def process_files(
                 "inp_cost": inp_cost,
                 "inp_wt_kg": inp_weight,
 
+                # 산출
                 "out_code": ", ".join(
                     sorted(
                         {
                             item["code"]
-                            for item in record["out"]
+                            for item
+                            in record["out"]
                             if item["code"] != "-"
                         }
                     )
@@ -469,7 +771,8 @@ def process_files(
                     sorted(
                         {
                             item["name"]
-                            for item in record["out"]
+                            for item
+                            in record["out"]
                             if item["name"] != "-"
                         }
                     )
@@ -480,16 +783,25 @@ def process_files(
                 "out_cost": out_cost,
                 "out_wt_kg": out_weight,
 
+                # 감모
                 "loss_wt_kg": loss_weight,
                 "loss_cost": loss_cost,
 
+                # 비율
                 "loss_ratio": loss_ratio,
                 "ratio": work_ratio,
 
+                # 작업비
                 "work_cost": work_cost,
 
-                "inp_details": record["inp"],
-                "out_details": record["out"],
+                # 상세
+                "inp_details": record[
+                    "inp"
+                ],
+
+                "out_details": record[
+                    "out"
+                ],
             }
         )
 
@@ -502,35 +814,88 @@ def process_files(
 def display_dataframe(
     records: list[dict[str, Any]],
 ) -> pd.DataFrame:
+
     rows = []
 
     for item in records:
+
         rows.append(
             {
-                "거래일자": item["date"],
-                "전표번호": item["doc_no"],
+                "거래일자": item[
+                    "date"
+                ],
 
-                "투입품목코드": item["inp_code"],
-                "투입품목명": item["inp_name"],
-                "투입수량": item["inp_qty"],
-                "투입중량(kg)": item["inp_wt_kg"],
-                "투입원가": item["inp_cost_unit"],
-                "투입원가(합계)": item["inp_cost"],
+                "전표번호": item[
+                    "doc_no"
+                ],
 
-                "산출품목코드": item["out_code"],
-                "산출품목명": item["out_name"],
-                "제조수량": item["out_qty"],
-                "제조중량(kg)": item["out_wt_kg"],
-                "납품원가": item["out_cost_unit"],
-                "납품원가(합계)": item["out_cost"],
+                "투입품목코드": item[
+                    "inp_code"
+                ],
 
-                "감모수량(kg)": item["loss_wt_kg"],
-                "감모금액(합계)": item["loss_cost"],
+                "투입품목명": item[
+                    "inp_name"
+                ],
 
-                "감모비율(%)": item["loss_ratio"],
-                "작업비비율(%)": item["ratio"],
+                "투입수량": item[
+                    "inp_qty"
+                ],
 
-                "소분작업비용(합계)": item["work_cost"],
+                "투입중량(kg)": item[
+                    "inp_wt_kg"
+                ],
+
+                "투입원가": item[
+                    "inp_cost_unit"
+                ],
+
+                "투입원가(합계)": item[
+                    "inp_cost"
+                ],
+
+                "산출품목코드": item[
+                    "out_code"
+                ],
+
+                "산출품목명": item[
+                    "out_name"
+                ],
+
+                "제조수량": item[
+                    "out_qty"
+                ],
+
+                "제조중량(kg)": item[
+                    "out_wt_kg"
+                ],
+
+                "납품원가": item[
+                    "out_cost_unit"
+                ],
+
+                "납품원가(합계)": item[
+                    "out_cost"
+                ],
+
+                "감모수량(kg)": item[
+                    "loss_wt_kg"
+                ],
+
+                "감모금액(합계)": item[
+                    "loss_cost"
+                ],
+
+                "감모비율(%)": item[
+                    "loss_ratio"
+                ],
+
+                "작업비비율(%)": item[
+                    "ratio"
+                ],
+
+                "소분작업비용(합계)": item[
+                    "work_cost"
+                ],
             }
         )
 
@@ -546,6 +911,9 @@ def display_dataframe(
 def with_daily_subtotals(
     dataframe: pd.DataFrame,
 ) -> pd.DataFrame:
+
+    """전표 목록에 일자별 소계와 전체 총합계 행을 덧붙인다."""
+
     numeric_columns = [
         "투입수량",
         "투입중량(kg)",
@@ -558,36 +926,81 @@ def with_daily_subtotals(
         "소분작업비용(합계)",
     ]
 
+    # =====================================================
+    # 소계 행 생성
+    # =====================================================
     def summary_row(
         rows: pd.DataFrame,
         label: str,
     ) -> dict[str, Any]:
-        totals = rows[numeric_columns].sum()
 
-        input_qty = totals["투입수량"]
-        input_weight = totals["투입중량(kg)"]
-        input_cost = totals["투입원가(합계)"]
+        totals = rows[
+            numeric_columns
+        ].sum()
 
-        output_qty = totals["제조수량"]
-        output_cost = totals["납품원가(합계)"]
+        # -------------------------------------------------
+        # 투입
+        # -------------------------------------------------
+        input_qty = totals[
+            "투입수량"
+        ]
 
-        loss_weight = totals["감모수량(kg)"]
-        loss_cost = totals["감모금액(합계)"]
+        input_weight = totals[
+            "투입중량(kg)"
+        ]
 
+        input_cost = totals[
+            "투입원가(합계)"
+        ]
+
+        # -------------------------------------------------
+        # 납품
+        # -------------------------------------------------
+        output_qty = totals[
+            "제조수량"
+        ]
+
+        output_cost = totals[
+            "납품원가(합계)"
+        ]
+
+        # -------------------------------------------------
+        # 감모
+        # -------------------------------------------------
+        loss_weight = totals[
+            "감모수량(kg)"
+        ]
+
+        loss_cost = totals[
+            "감모금액(합계)"
+        ]
+
+        # -------------------------------------------------
+        # 투입원가 낱개
+        # -------------------------------------------------
         input_unit_cost = (
-            abs(input_cost) / abs(input_qty)
+            abs(input_cost)
+            / abs(input_qty)
             if input_qty
             else 0.0
         )
 
+        # -------------------------------------------------
+        # 납품원가 낱개
+        # -------------------------------------------------
         output_unit_cost = (
-            abs(output_cost) / abs(output_qty)
+            abs(output_cost)
+            / abs(output_qty)
             if output_qty
             else 0.0
         )
 
+        # -------------------------------------------------
+        # 소계 결과
+        # -------------------------------------------------
         return {
             "거래일자": label,
+
             "전표번호": "-",
 
             "투입품목코드": "-",
@@ -603,22 +1016,29 @@ def with_daily_subtotals(
             "산출품목명": "-",
 
             "제조수량": output_qty,
-            "제조중량(kg)": totals["제조중량(kg)"],
+            "제조중량(kg)": totals[
+                "제조중량(kg)"
+            ],
 
             "납품원가": output_unit_cost,
             "납품원가(합계)": output_cost,
 
             "감모수량(kg)": loss_weight,
+
             "감모금액(합계)": loss_cost,
 
             "감모비율(%)": (
-                loss_weight / abs(input_weight) * 100
+                loss_weight
+                / abs(input_weight)
+                * 100
                 if input_weight
                 else 0.0
             ),
 
             "작업비비율(%)": (
-                totals["소분작업비용(합계)"]
+                totals[
+                    "소분작업비용(합계)"
+                ]
                 / -input_cost
                 * 100
                 if input_cost
@@ -630,14 +1050,27 @@ def with_daily_subtotals(
             ],
         }
 
-    result_parts: list[pd.DataFrame] = []
+    # =====================================================
+    # 결과 조립
+    # =====================================================
+    result_parts: list[
+        pd.DataFrame
+    ] = []
 
-    for transaction_date, rows in dataframe.groupby(
+    for (
+        transaction_date,
+        rows,
+    ) in dataframe.groupby(
         "거래일자",
         sort=True,
     ):
-        result_parts.append(rows)
 
+        # 실제 전표
+        result_parts.append(
+            rows
+        )
+
+        # 일자별 소계
         result_parts.append(
             pd.DataFrame(
                 [
@@ -649,6 +1082,7 @@ def with_daily_subtotals(
             )
         )
 
+    # 전체 총합계
     result_parts.append(
         pd.DataFrame(
             [
@@ -672,12 +1106,14 @@ def with_daily_subtotals(
 def to_excel(
     dataframe: pd.DataFrame,
 ) -> bytes:
+
     output = BytesIO()
 
     with pd.ExcelWriter(
         output,
         engine="openpyxl",
     ) as writer:
+
         dataframe.to_excel(
             writer,
             index=False,
@@ -688,56 +1124,70 @@ def to_excel(
 
 
 # =========================================================
-# 그래프 1
-# 조회 조건에 부합하는 소분작업비용 비율
+# 소분작업비용 그래프
 # =========================================================
 def show_work_cost_pie(
     filtered: pd.DataFrame,
 ) -> None:
-    total = filtered["소분작업비용(합계)"].sum()
+    """조회 조건에 맞는 투입품목명별 소분작업비용 합계 비율을 표시한다."""
 
-    if filtered.empty or total == 0:
-        st.info("조회 조건에 해당하는 소분작업비용 데이터가 없습니다.")
-        return
+    chart_data = (
+        filtered[
+            ["투입품목명", "소분작업비용(합계)"]
+        ]
+        .copy()
+    )
 
-    # 현재 조회 결과를 전표별 소분작업비용으로 구성
-    # 원형 그래프는 전체 합계에서 각 전표가 차지하는 비율을 표시한다.
-    pie_df = (
-        filtered.groupby(
-            "전표번호",
+    chart_data["투입품목명"] = (
+        chart_data["투입품목명"]
+        .fillna("-")
+        .astype(str)
+        .str.strip()
+        .replace("", "-")
+    )
+
+    chart_data["소분작업비용(합계)"] = pd.to_numeric(
+        chart_data["소분작업비용(합계)"],
+        errors="coerce",
+    ).fillna(0)
+
+    chart_data = (
+        chart_data
+        .groupby(
+            "투입품목명",
             as_index=False,
         )["소분작업비용(합계)"]
         .sum()
     )
 
-    pie_df = pie_df[
-        pie_df["소분작업비용(합계)"] != 0
-    ].copy()
-
-    if pie_df.empty:
-        st.info("원형 그래프로 표시할 소분작업비용이 없습니다.")
-        return
-
-    pie_df["구분"] = (
-        "전표 " + pie_df["전표번호"].astype(str)
+    # 0원 이하 품목은 비율 그래프에서 제외
+    chart_data = chart_data[
+        chart_data["소분작업비용(합계)"] > 0
+    ].sort_values(
+        "소분작업비용(합계)",
+        ascending=False,
     )
+
+    if chart_data.empty:
+        st.info("조회 조건에 해당하는 소분작업비용 데이터가 없습니다.")
+        return
 
     if px is not None:
         fig = px.pie(
-            pie_df,
-            names="구분",
+            chart_data,
+            names="투입품목명",
             values="소분작업비용(합계)",
-            title="조회 조건별 소분작업비용 비율",
+            title="투입품목명별 소분작업비용 비율",
             hole=0,
         )
 
         fig.update_traces(
+            textposition="inside",
             texttemplate="%{percent:.1%}",
             hovertemplate=(
-                "%{label}<br>"
+                "<b>%{label}</b><br>"
                 "소분작업비용: %{value:,.0f}원<br>"
-                "비율: %{percent:.1%}"
-                "<extra></extra>"
+                "비율: %{percent:.1%}<extra></extra>"
             ),
         )
 
@@ -748,7 +1198,7 @@ def show_work_cost_pie(
                 t=60,
                 b=20,
             ),
-            legend_title_text="전표",
+            legend_title_text="투입품목명",
         )
 
         st.plotly_chart(
@@ -756,51 +1206,56 @@ def show_work_cost_pie(
             use_container_width=True,
         )
     else:
-        # Plotly가 없는 환경에서도 앱 자체는 실행되도록 fallback
-        chart_df = pie_df.set_index("구분")[
-            ["소분작업비용(합계)"]
-        ]
-        st.bar_chart(chart_df)
+        st.warning(
+            "원형 그래프를 표시하려면 plotly가 필요합니다. "
+            "터미널에서 `pip install plotly`를 실행해 주세요."
+        )
 
 
-# =========================================================
-# 그래프 2
-# 거래일자별 소분작업비용 꺾은선형
-# =========================================================
 def show_work_cost_line(
     filtered: pd.DataFrame,
 ) -> None:
-    if filtered.empty:
-        st.info("조회 조건에 해당하는 거래일자별 데이터가 없습니다.")
-        return
+    """거래일자별 소분작업비용 합계를 꺾은선 그래프로 표시한다."""
 
-    line_df = (
-        filtered.assign(
-            거래일자_dt=pd.to_datetime(
-                filtered["거래일자"],
-                errors="coerce",
-            )
-        )
-        .dropna(subset=["거래일자_dt"])
+    chart_data = (
+        filtered[
+            ["거래일자", "소분작업비용(합계)"]
+        ]
+        .copy()
+    )
+
+    chart_data["거래일자"] = pd.to_datetime(
+        chart_data["거래일자"],
+        errors="coerce",
+    )
+
+    chart_data["소분작업비용(합계)"] = pd.to_numeric(
+        chart_data["소분작업비용(합계)"],
+        errors="coerce",
+    ).fillna(0)
+
+    chart_data = (
+        chart_data
+        .dropna(subset=["거래일자"])
         .groupby(
-            "거래일자_dt",
+            "거래일자",
             as_index=False,
         )["소분작업비용(합계)"]
         .sum()
-        .sort_values("거래일자_dt")
+        .sort_values("거래일자")
     )
 
-    if line_df.empty:
-        st.info("거래일자별 그래프로 표시할 데이터가 없습니다.")
+    if chart_data.empty:
+        st.info("조회 조건에 해당하는 거래일자별 데이터가 없습니다.")
         return
 
-    line_df["거래일자"] = line_df[
-        "거래일자_dt"
+    chart_data["거래일자"] = chart_data[
+        "거래일자"
     ].dt.strftime("%Y-%m-%d")
 
     if px is not None:
         fig = px.line(
-            line_df,
+            chart_data,
             x="거래일자",
             y="소분작업비용(합계)",
             markers=True,
@@ -809,10 +1264,9 @@ def show_work_cost_line(
 
         fig.update_traces(
             hovertemplate=(
-                "%{x}<br>"
-                "소분작업비용: %{y:,.0f}원"
-                "<extra></extra>"
-            )
+                "거래일자: %{x}<br>"
+                "소분작업비용: %{y:,.0f}원<extra></extra>"
+            ),
         )
 
         fig.update_layout(
@@ -831,10 +1285,9 @@ def show_work_cost_line(
             use_container_width=True,
         )
     else:
-        chart_df = line_df.set_index("거래일자")[
-            ["소분작업비용(합계)"]
-        ]
-        st.line_chart(chart_df)
+        st.line_chart(
+            chart_data.set_index("거래일자")
+        )
 
 
 # =========================================================
@@ -850,7 +1303,9 @@ st.set_page_config(
 # =========================================================
 # 제목
 # =========================================================
-st.title("엔포유 소분 작업 및 감모 관리")
+st.title(
+    "엔포유 소분 작업 및 감모 관리"
+)
 
 st.caption(
     "소분리스트와 제품조회 파일을 업로드하면 "
@@ -865,6 +1320,7 @@ for key, default in {
     "records": None,
     "file_signature": None,
 }.items():
+
     st.session_state.setdefault(
         key,
         default,
@@ -874,29 +1330,49 @@ for key, default in {
 # =========================================================
 # 파일 업로드
 # =========================================================
-with st.container(border=True):
+with st.container(
+    border=True
+):
+
     st.subheader(
         "파일 업로드",
         divider="gray",
     )
 
-    upload_list, upload_product = st.columns(2)
+    upload_list, upload_product = st.columns(
+        2
+    )
 
+    # -----------------------------------------------------
+    # 소분리스트
+    # -----------------------------------------------------
     with upload_list:
+
         list_file = st.file_uploader(
             "1. 엔포유소분리스트",
             type=["xlsx"],
             key="list_file",
         )
 
+    # -----------------------------------------------------
+    # 제품조회
+    # -----------------------------------------------------
     with upload_product:
+
         product_file = st.file_uploader(
             "2. 제품조회",
             type=["xlsx"],
             key="product_file",
         )
 
-    if list_file and product_file:
+    # =====================================================
+    # 파일이 모두 올라온 경우
+    # =====================================================
+    if (
+        list_file
+        and product_file
+    ):
+
         signature = (
             list_file.name,
             list_file.size,
@@ -904,17 +1380,31 @@ with st.container(border=True):
             product_file.size,
         )
 
-        if signature != st.session_state.file_signature:
+        if (
+            signature
+            != st.session_state.file_signature
+        ):
+
             try:
+
                 with st.spinner(
                     "업로드 파일을 분석하는 중입니다..."
                 ):
-                    st.session_state.records = process_files(
-                        BytesIO(list_file.getvalue()),
-                        BytesIO(product_file.getvalue()),
+
+                    st.session_state.records = (
+                        process_files(
+                            BytesIO(
+                                list_file.getvalue()
+                            ),
+                            BytesIO(
+                                product_file.getvalue()
+                            ),
+                        )
                     )
 
-                    st.session_state.file_signature = signature
+                    st.session_state.file_signature = (
+                        signature
+                    )
 
                 st.success(
                     f"분석 완료: 전표 "
@@ -922,6 +1412,7 @@ with st.container(border=True):
                 )
 
             except Exception as exc:
+
                 st.session_state.records = None
 
                 st.error(
@@ -929,7 +1420,9 @@ with st.container(border=True):
                     "엑셀 형식을 확인해 주세요.\n\n"
                     f"{exc}"
                 )
+
     else:
+
         st.info(
             "두 개의 .xlsx 파일을 모두 올려 주세요."
         )
@@ -940,28 +1433,56 @@ with st.container(border=True):
 # =========================================================
 records = st.session_state.records
 
+
 if records is not None:
+
+    # -----------------------------------------------------
+    # 분석 대상 없음
+    # -----------------------------------------------------
     if not records:
+
         st.warning(
             "소분 또는 대연점 창고에 해당하는 "
             "분석 대상 행을 찾지 못했습니다."
         )
+
         st.stop()
 
-    frame = display_dataframe(records)
+    # -----------------------------------------------------
+    # 화면 DataFrame
+    # -----------------------------------------------------
+    frame = display_dataframe(
+        records
+    )
 
+    # -----------------------------------------------------
+    # 날짜 범위
+    # -----------------------------------------------------
     available_dates = pd.to_datetime(
         frame["거래일자"],
         errors="coerce",
     ).dropna()
 
-    min_date = available_dates.min().date()
-    max_date = available_dates.max().date()
+    min_date = (
+        available_dates
+        .min()
+        .date()
+    )
+
+    max_date = (
+        available_dates
+        .max()
+        .date()
+    )
+
 
     # =====================================================
     # 조회 조건
     # =====================================================
-    with st.container(border=True):
+    with st.container(
+        border=True
+    ):
+
         st.subheader(
             "조회 조건",
             divider="gray",
@@ -971,38 +1492,62 @@ if records is not None:
             "filter_form",
             border=False,
         ):
-            start_column, end_column = st.columns(2)
 
+            start_column, end_column = st.columns(
+                2
+            )
+
+            # -------------------------------------------------
+            # 시작일
+            # -------------------------------------------------
             with start_column:
+
                 start_date = st.date_input(
                     "시작일",
                     value=min_date,
                     key="filter_start_date",
                 )
 
+            # -------------------------------------------------
+            # 종료일
+            # -------------------------------------------------
             with end_column:
+
                 end_date = st.date_input(
                     "종료일",
                     value=max_date,
                     key="filter_end_date",
                 )
 
+            # -------------------------------------------------
+            # 품목명
+            # -------------------------------------------------
             keyword = st.text_input(
                 "투입품목명",
                 placeholder="예: 삼겹살",
             )
 
+            # -------------------------------------------------
+            # 조회 버튼
+            # -------------------------------------------------
             st.form_submit_button(
                 "조회",
                 icon=":material/search:",
                 type="primary",
             )
 
+
+    # =====================================================
+    # 날짜 오류
+    # =====================================================
     if start_date > end_date:
+
         st.error(
             "시작일은 종료일보다 늦을 수 없습니다."
         )
+
         st.stop()
+
 
     # =====================================================
     # 데이터 필터
@@ -1018,14 +1563,21 @@ if records is not None:
         )
     ]
 
+    # -----------------------------------------------------
+    # 품목명 필터
+    # -----------------------------------------------------
     if keyword:
+
         filtered = filtered[
-            filtered["투입품목명"].str.contains(
+            filtered[
+                "투입품목명"
+            ].str.contains(
                 keyword,
                 case=False,
                 na=False,
             )
         ]
+
 
     # =====================================================
     # KPI 계산
@@ -1061,6 +1613,7 @@ if records is not None:
         if total_input_cost
         else 0.0
     )
+
 
     # =====================================================
     # KPI 표시
@@ -1105,10 +1658,258 @@ if records is not None:
         f"{total_work_ratio:,.2f}%",
     )
 
+
     # =====================================================
-    # 그래프
-    # 조회 조건에 부합하는 데이터만 사용
+    # 전표별 분석 결과
     # =====================================================
+    st.subheader(
+        "전표별 분석 결과"
+    )
+
+    table_frame = with_daily_subtotals(
+        filtered
+    )
+
+
+    # =====================================================
+    # 결과 테이블
+    # =====================================================
+    st.dataframe(
+        table_frame,
+        hide_index=True,
+
+        column_config={
+
+            # -------------------------------------------------
+            # 중량
+            # -------------------------------------------------
+            name: st.column_config.NumberColumn(
+                format="%,.2f"
+            )
+
+            for name in [
+                "투입중량(kg)",
+                "제조중량(kg)",
+                "감모수량(kg)",
+            ]
+        }
+
+        |
+
+        {
+
+            # -------------------------------------------------
+            # 금액 / 수량
+            # -------------------------------------------------
+            name: st.column_config.NumberColumn(
+                format="%,.0f"
+            )
+
+            for name in [
+                "투입수량",
+                "투입원가",
+                "투입원가(합계)",
+                "제조수량",
+                "납품원가",
+                "납품원가(합계)",
+                "감모금액(합계)",
+                "소분작업비용(합계)",
+            ]
+        }
+
+        |
+
+        {
+
+            # -------------------------------------------------
+            # 비율
+            # -------------------------------------------------
+            name: st.column_config.NumberColumn(
+                format="%.2f%%"
+            )
+
+            for name in [
+                "감모비율(%)",
+                "작업비비율(%)",
+            ]
+        },
+
+        key="results_table",
+    )
+
+
+    # =====================================================
+    # 엑셀 다운로드
+    # =====================================================
+    st.download_button(
+        "결과 엑셀 다운로드",
+
+        data=to_excel(
+            table_frame
+        ),
+
+        file_name=(
+            "엔포유_소분작업분석.xlsx"
+        ),
+
+        mime=(
+            "application/vnd.openxmlformats-officedocument."
+            "spreadsheetml.sheet"
+        ),
+
+        icon=":material/download:",
+    )
+
+
+    # =====================================================
+    # 전표 상세 조회
+    # =====================================================
+    lookup = {
+        (
+            item["date"],
+            item["doc_no"],
+        ): item
+
+        for item in records
+    }
+
+    choices = [
+        (
+            row["거래일자"],
+            row["전표번호"],
+        )
+
+        for _, row in filtered.iterrows()
+    ]
+
+
+    # =====================================================
+    # 상세 전표가 있는 경우
+    # =====================================================
+    if choices:
+
+        st.subheader(
+            "전표 상세"
+        )
+
+        selected = st.selectbox(
+            "상세 전표",
+            choices,
+
+            format_func=lambda value:
+                f"{value[0]} | 전표번호 {value[1]}",
+        )
+
+        detail = lookup[
+            selected
+        ]
+
+
+        # =================================================
+        # 상세 원가
+        # =================================================
+        cost_metrics = st.columns(
+            5
+        )
+
+        # -------------------------------------------------
+        # 투입원가
+        # -------------------------------------------------
+        cost_metrics[0].metric(
+            "투입원가",
+            f"{detail['inp_cost_unit']:,.0f}원",
+        )
+
+        # -------------------------------------------------
+        # 투입원가 합계
+        # -------------------------------------------------
+        cost_metrics[1].metric(
+            "투입원가(합계)",
+            f"{detail['inp_cost']:,.0f}원",
+        )
+
+        # -------------------------------------------------
+        # 납품원가
+        # -------------------------------------------------
+        cost_metrics[2].metric(
+            "납품원가",
+            f"{detail['out_cost_unit']:,.0f}원",
+        )
+
+        # -------------------------------------------------
+        # 납품원가 합계
+        # -------------------------------------------------
+        cost_metrics[3].metric(
+            "납품원가(합계)",
+            f"{detail['out_cost']:,.0f}원",
+        )
+
+        # -------------------------------------------------
+        # 소분작업비용
+        # -------------------------------------------------
+        cost_metrics[4].metric(
+            "소분작업비용",
+            f"{detail['work_cost']:,.0f}원",
+        )
+
+
+        # =================================================
+        # 투입 / 산출 상세
+        # =================================================
+        left, right = st.columns(
+            2
+        )
+
+        for (
+            column,
+            title,
+            items,
+        ) in (
+            (
+                left,
+                "투입 품목 (소분)",
+                detail["inp_details"],
+            ),
+            (
+                right,
+                "산출 품목 (대연점)",
+                detail["out_details"],
+            ),
+        ):
+
+            with column.container(
+                border=True
+            ):
+
+                st.markdown(
+                    f"#### {title}"
+                )
+
+                detail_frame = (
+                    pd.DataFrame(
+                        items
+                    )
+                    .rename(
+                        columns={
+                            "code": "코드",
+                            "name": "품목명",
+                            "qty": "수량",
+                            "price": "금액",
+                            "unit_weight": "단중량(g)",
+                            "weight_kg": "총중량(kg)",
+                        }
+                    )
+                )
+
+                st.dataframe(
+                    detail_frame,
+                    hide_index=True,
+                )
+
+# =========================================================
+# 소분작업비용 분석 그래프
+# =========================================================
+if records is not None and records:
     st.subheader(
         "소분작업비용 분석",
         divider="gray",
@@ -1127,159 +1928,3 @@ if records is not None:
         with st.container(border=True):
             show_work_cost_line(filtered)
 
-    # =====================================================
-    # 전표별 분석 결과
-    # =====================================================
-    st.subheader("전표별 분석 결과")
-
-    table_frame = with_daily_subtotals(filtered)
-
-    st.dataframe(
-        table_frame,
-        hide_index=True,
-        column_config={
-            name: st.column_config.NumberColumn(
-                format="%,.2f"
-            )
-            for name in [
-                "투입중량(kg)",
-                "제조중량(kg)",
-                "감모수량(kg)",
-            ]
-        }
-        | {
-            name: st.column_config.NumberColumn(
-                format="%,.0f"
-            )
-            for name in [
-                "투입수량",
-                "투입원가",
-                "투입원가(합계)",
-                "제조수량",
-                "납품원가",
-                "납품원가(합계)",
-                "감모금액(합계)",
-                "소분작업비용(합계)",
-            ]
-        }
-        | {
-            name: st.column_config.NumberColumn(
-                format="%.2f%%"
-            )
-            for name in [
-                "감모비율(%)",
-                "작업비비율(%)",
-            ]
-        },
-        key="results_table",
-        use_container_width=True,
-    )
-
-    # =====================================================
-    # 엑셀 다운로드
-    # =====================================================
-    st.download_button(
-        "결과 엑셀 다운로드",
-        data=to_excel(table_frame),
-        file_name="엔포유_소분작업분석.xlsx",
-        mime=(
-            "application/vnd.openxmlformats-officedocument."
-            "spreadsheetml.sheet"
-        ),
-        icon=":material/download:",
-    )
-
-    # =====================================================
-    # 전표 상세 조회
-    # =====================================================
-    lookup = {
-        (
-            item["date"],
-            item["doc_no"],
-        ): item
-        for item in records
-    }
-
-    choices = [
-        (
-            row["거래일자"],
-            row["전표번호"],
-        )
-        for _, row in filtered.iterrows()
-    ]
-
-    if choices:
-        st.subheader("전표 상세")
-
-        selected = st.selectbox(
-            "상세 전표",
-            choices,
-            format_func=lambda value:
-                f"{value[0]} | 전표번호 {value[1]}",
-        )
-
-        detail = lookup[selected]
-
-        cost_metrics = st.columns(5)
-
-        cost_metrics[0].metric(
-            "투입원가",
-            f"{detail['inp_cost_unit']:,.0f}원",
-        )
-
-        cost_metrics[1].metric(
-            "투입원가(합계)",
-            f"{detail['inp_cost']:,.0f}원",
-        )
-
-        cost_metrics[2].metric(
-            "납품원가",
-            f"{detail['out_cost_unit']:,.0f}원",
-        )
-
-        cost_metrics[3].metric(
-            "납품원가(합계)",
-            f"{detail['out_cost']:,.0f}원",
-        )
-
-        cost_metrics[4].metric(
-            "소분작업비용",
-            f"{detail['work_cost']:,.0f}원",
-        )
-
-        left, right = st.columns(2)
-
-        for column, title, items in (
-            (
-                left,
-                "투입 품목 (소분)",
-                detail["inp_details"],
-            ),
-            (
-                right,
-                "산출 품목 (대연점)",
-                detail["out_details"],
-            ),
-        ):
-            with column.container(border=True):
-                st.markdown(f"#### {title}")
-
-                detail_frame = (
-                    pd.DataFrame(items)
-                    .rename(
-                        columns={
-                            "code": "코드",
-                            "name": "품목명",
-                            "qty": "수량",
-                            "price": "금액",
-                            "unit_weight": "단중량(g)",
-                            "weight_kg": "총중량(kg)",
-                        }
-                    )
-                )
-
-                st.dataframe(
-                    detail_frame,
-                    hide_index=True,
-                    use_container_width=True,
-                )
