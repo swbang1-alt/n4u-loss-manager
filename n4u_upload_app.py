@@ -1,5 +1,4 @@
-
-엔포유 소분 작업 및 감모 관리 업로드 프로그램.
+"""엔포유 소분 작업 및 감모 관리 업로드 프로그램.
 
 실행:
 streamlit run n4u_upload_app.py
@@ -1734,4 +1733,3 @@ if records is not None:
                     detail_frame,
                     hide_index=True,
                 )
-
